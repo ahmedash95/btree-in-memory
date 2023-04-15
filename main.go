@@ -1,6 +1,10 @@
 package main
 
-import "sort"
+import (
+	"math/rand"
+	"sort"
+	"time"
+)
 
 const (
 	TYPE_LEAF     = 0
@@ -8,8 +12,9 @@ const (
 )
 
 type BTree struct {
-	root    *Node
-	maxKeys int
+	root        *Node
+	maxKeys     int
+	callOnSplit func()
 }
 
 type Node struct {
@@ -42,6 +47,10 @@ func (n *Node) insert(key int) {
 	} else {
 		n.insertLeaf(key)
 	}
+
+	if n.tree.callOnSplit != nil {
+		n.tree.callOnSplit()
+	}
 }
 
 func (n *Node) insertInterior(key int) {
@@ -71,30 +80,30 @@ func (n *Node) splitInterior() {
 		createParent(n)
 	}
 
-	// split the node
+	// splitLeaf the node
 	// current node will contain the first half of the keys
 	// new node will contain the second half of the keys
-	midKeys := len(n.keys) / 2
-	midChilds := len(n.childs) / 2
-	splitKey := n.keys[midKeys]
+	midKey := n.keys[len(n.keys)/2]
+	n.parent.addKey(midKey)
 
 	// set right node
 	newNode := NewNode(n.tree, TYPE_INTERIOR)
-	newNode.keys = n.keys[midKeys+1:]
-	newNode.childs = n.childs[midChilds:]
 	newNode.parent = n.parent
+
+	n.keys, newNode.keys = n.splitTwoKeys()
+	n.childs, newNode.childs = n.splitTwoChilds()
+
+	// splitting internal node is a bit different
+	// we take one key out of the sibling node and put it in the parent node
+	if len(newNode.keys) > 1 {
+		newNode.keys = newNode.keys[1:]
+	}
 
 	for _, childNode := range newNode.childs {
 		childNode.parent = newNode
 	}
 
-	// update left node
-	n.keys = n.keys[:midKeys]
-	n.childs = n.childs[:midChilds]
-
-	index := sort.SearchInts(n.parent.keys, splitKey)
-	n.parent.keys = append(n.parent.keys[:index], append([]int{splitKey}, n.parent.keys[index:]...)...)
-	n.parent.childs = append(n.parent.childs[:index+1], append([]*Node{newNode}, n.parent.childs[index+1:]...)...)
+	newNode.parent.addChild(newNode)
 }
 
 func (n *Node) insertLeaf(key int) {
@@ -112,38 +121,88 @@ func (n *Node) insertLeaf(key int) {
 	copy(newKeys[index+1:], n.keys[index:])
 	n.keys = newKeys
 
-	// check if we need to split
+	// check if we need to splitLeaf
 	if len(n.keys) > n.tree.maxKeys {
-		n.split()
+		n.splitLeaf()
 	}
 }
 
-func (n *Node) split() {
+func (n *Node) splitLeaf() {
 	if n.parent == nil {
 		createParent(n)
 	}
 
-	mid := len(n.keys) / 2
-
 	newNode := NewNode(n.tree, TYPE_LEAF)
-	newNode.keys = n.keys[mid:]
 	newNode.parent = n.parent
-	if len(n.childs) > 0 {
-		newNode.childs = n.childs[mid:]
-		for _, childNode := range newNode.childs {
-			childNode.parent = newNode
-		}
-	}
 
-	n.keys = n.keys[:mid]
-	if len(n.childs) > 0 {
-		n.childs = n.childs[:mid]
-	}
+	n.keys, newNode.keys = n.splitTwoKeys()
 
 	splitKey := newNode.keys[0]
-	index := sort.SearchInts(n.parent.keys, splitKey)
-	n.parent.keys = append(n.parent.keys[:index], append([]int{splitKey}, n.parent.keys[index:]...)...)
-	n.parent.childs = append(n.parent.childs[:index+1], append([]*Node{newNode}, n.parent.childs[index+1:]...)...)
+	n.parent.addKey(splitKey)
+	n.parent.addChild(newNode)
+}
+
+func (n *Node) splitTwoKeys() ([]int, []int) {
+	mid := len(n.keys) / 2
+	leftKeys := make([]int, mid)
+	rightKeys := make([]int, len(n.keys)-mid)
+
+	copy(leftKeys, n.keys[:mid])
+	copy(rightKeys, n.keys[mid:])
+
+	return leftKeys, rightKeys
+}
+
+func (n *Node) splitTwoChilds() ([]*Node, []*Node) {
+
+	var mid int
+	if len(n.childs)%2 != 0 { // odd
+		mid = (len(n.childs) / 2) + 1
+	} else {
+		mid = len(n.childs) / 2
+	}
+
+	leftChilds := make([]*Node, mid)
+	rightChilds := make([]*Node, len(n.childs)-mid)
+
+	copy(leftChilds, n.childs[:mid])
+	copy(rightChilds, n.childs[mid:])
+
+	return leftChilds, rightChilds
+}
+
+func (n *Node) addKey(key int) {
+	newKeys := make([]int, len(n.keys)+1)
+	index := sort.SearchInts(n.keys, key)
+	copy(newKeys, n.keys[:index])
+	newKeys[index] = key
+	copy(newKeys[index+1:], n.keys[index:])
+
+	n.keys = newKeys
+}
+
+func (n *Node) addChild(node *Node) {
+	newChilds := make([]*Node, len(n.childs)+1)
+	// search for index by child first key
+	index := sort.Search(len(n.childs), func(i int) bool { return n.childs[i].keys[0] >= node.keys[0] })
+	copy(newChilds, n.childs[:index])
+	newChilds[index] = node
+	copy(newChilds[index+1:], n.childs[index:])
+
+	n.childs = newChilds
+}
+
+func (n *Node) removeKey(key int) {
+	newKeys := make([]int, len(n.keys)-1)
+	for i := 0; i < len(n.keys); i++ {
+		if n.keys[i] == key {
+			continue
+		}
+
+		newKeys = append(newKeys, n.keys[i])
+	}
+
+	n.keys = newKeys
 }
 
 func createParent(n *Node) {
@@ -155,15 +214,39 @@ func createParent(n *Node) {
 }
 
 func main() {
-	tree := BTree{maxKeys: 2}
+	tree := BTree{maxKeys: 5}
 
-	tree.Insert(1)
-	tree.Insert(6)
-	tree.Insert(7)
-	tree.Insert(8)
-	//tree.Insert(9)
-	//tree.Insert(2)
-	//tree.Insert(3)
+	var html []string
+	tree.callOnSplit = func() {
+		newTree := MermaidHtml(tree)
+		if len(html) > 0 && html[len(html)-1] == newTree {
+			return
+		}
 
-	printTree(tree)
+		html = append(html, newTree)
+	}
+
+	var nums []int
+	for i := 1; i <= 25; i++ {
+		nums = append(nums, i)
+	}
+
+	nums = shuffle(nums)
+
+	for _, num := range nums {
+		tree.Insert(num)
+	}
+
+	mermaidToHtml(html)
+}
+
+func shuffle(nums []int) []int {
+	// shuffle the numbers
+	rand.Seed(time.Now().UnixNano())
+	for i := range nums {
+		j := rand.Intn(i + 1)
+		nums[i], nums[j] = nums[j], nums[i]
+	}
+
+	return nums
 }
