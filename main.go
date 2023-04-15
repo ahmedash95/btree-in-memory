@@ -172,24 +172,18 @@ func (n *Node) splitTwoChilds() ([]*Node, []*Node) {
 }
 
 func (n *Node) addKey(key int) {
-	newKeys := make([]int, len(n.keys)+1)
 	index := sort.SearchInts(n.keys, key)
-	copy(newKeys, n.keys[:index])
-	newKeys[index] = key
-	copy(newKeys[index+1:], n.keys[index:])
-
-	n.keys = newKeys
+	n.keys = append(n.keys, 0)             // Add a new zero value at the end of the slice
+	copy(n.keys[index+1:], n.keys[index:]) // Shift elements to the right by one position
+	n.keys[index] = key                    // Insert the key at the correct position
 }
 
 func (n *Node) addChild(node *Node) {
-	newChilds := make([]*Node, len(n.childs)+1)
 	// search for index by child first key
 	index := sort.Search(len(n.childs), func(i int) bool { return n.childs[i].keys[0] >= node.keys[0] })
-	copy(newChilds, n.childs[:index])
-	newChilds[index] = node
-	copy(newChilds[index+1:], n.childs[index:])
-
-	n.childs = newChilds
+	n.childs = append(n.childs, nil)           // Add a new nil value at the end of the slice
+	copy(n.childs[index+1:], n.childs[index:]) // Shift elements to the right by one position
+	n.childs[index] = node                     // Insert the child node at the correct position
 }
 
 func (n *Node) removeKey(key int) {
@@ -214,7 +208,7 @@ func createParent(n *Node) {
 }
 
 func main() {
-	tree := BTree{maxKeys: 5}
+	tree := BTree{maxKeys: 3}
 
 	var html []string
 	tree.callOnSplit = func() {
